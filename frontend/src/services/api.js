@@ -111,6 +111,31 @@ export const runSimulation = async (scenario) => {
 };
 
 // ─────────────────────────────────────────────
+// Digital Ledger (CSV)
+// ─────────────────────────────────────────────
+
+/** Upload a custom company digital ledger CSV file */
+export const uploadLedger = async (file, replaceAll = true, runAnalysis = true) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post(`/upload-ledger?replace_all=${replaceAll}&run_analysis=${runAnalysis}`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+/** Load the pre-built synthetic company digital ledger */
+export const loadDemoLedger = async (runAnalysis = true) => {
+  const response = await api.post(`/load-demo-ledger?run_analysis=${runAnalysis}`);
+  return response.data;
+};
+
+/** URL to download the demo digital ledger CSV */
+export const getDemoLedgerUrl = () => `${BASE_URL}/demo-ledger`;
+
+// ─────────────────────────────────────────────
 // WebSocket Manager
 // ─────────────────────────────────────────────
 

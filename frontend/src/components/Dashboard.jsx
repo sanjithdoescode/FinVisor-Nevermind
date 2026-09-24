@@ -10,7 +10,8 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, DollarSign, Activity,
-  AlertTriangle, ArrowUpRight, ArrowDownRight
+  AlertTriangle, ArrowUpRight, ArrowDownRight,
+  FileSpreadsheet, Sparkles, ArrowRight
 } from 'lucide-react';
 
 import {
@@ -97,7 +98,7 @@ function LiveTicker({ transactions }) {
 }
 
 // ── Main Dashboard ────────────────────────────
-export default function Dashboard({ transactions, isConnected }) {
+export default function Dashboard({ transactions, isConnected, onNavigate }) {
   const summary = MOCK_SUMMARY;
   const cashflow = MOCK_CASHFLOW;
   const categories = MOCK_SPENDING_BY_CATEGORY;
@@ -105,6 +106,44 @@ export default function Dashboard({ transactions, isConnected }) {
 
   return (
     <div className="space-y-6">
+      {/* Digital Ledger Quick Actions Banner */}
+      <div className="bg-gradient-to-r from-blue-950/60 via-slate-800 to-indigo-950/60 border border-blue-500/20 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 flex-shrink-0">
+            <FileSpreadsheet className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-semibold text-sm">Digital Ledger Pipeline</span>
+              <span className="bg-blue-500/20 text-blue-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-blue-500/30">
+                CSV Data Demo Ready
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Load your company&apos;s digital ledger or ingest the pre-generated 2,560 synthetic transaction dataset for grounded AI analysis.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => onNavigate && onNavigate('ledger')}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all shadow-md shadow-blue-500/20"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Load / Upload Ledger</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onNavigate && onNavigate('report')}
+            className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium px-3.5 py-2 rounded-xl transition-colors border border-slate-600"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+            <span>AI Financial Plan</span>
+          </button>
+        </div>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KPICard

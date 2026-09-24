@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Shield,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 import Dashboard from './components/Dashboard';
@@ -26,15 +27,17 @@ import AnomalyAlerts from './components/AnomalyAlerts';
 import RecurringCosts from './components/RecurringCosts';
 import FinancialReport from './components/FinancialReport';
 import WhatIfSimulator from './components/WhatIfSimulator';
+import LedgerUpload from './components/LedgerUpload';
 import { useLiveTransactions } from './hooks/useLiveTransactions';
 
 const NAV_ITEMS = [
-  { id: 'dashboard',    label: 'Dashboard',         icon: LayoutDashboard },
-  { id: 'transactions', label: 'Transactions',       icon: ArrowLeftRight },
-  { id: 'anomalies',    label: 'Anomaly Alerts',     icon: AlertTriangle },
-  { id: 'recurring',    label: 'Recurring Costs',    icon: RefreshCw },
-  { id: 'report',       label: 'AI Report',          icon: FileText },
-  { id: 'simulator',    label: 'What-If Simulator',  icon: FlaskConical },
+  { id: 'dashboard',    label: 'Dashboard',             icon: LayoutDashboard },
+  { id: 'ledger',       label: 'Digital Ledger (CSV)',   icon: FileSpreadsheet },
+  { id: 'transactions', label: 'Transactions',           icon: ArrowLeftRight },
+  { id: 'anomalies',    label: 'Anomaly Alerts',         icon: AlertTriangle },
+  { id: 'recurring',    label: 'Recurring Costs',        icon: RefreshCw },
+  { id: 'report',       label: 'AI Report',              icon: FileText },
+  { id: 'simulator',    label: 'What-If Simulator',      icon: FlaskConical },
 ];
 
 export default function App() {
@@ -44,13 +47,14 @@ export default function App() {
 
   const renderView = () => {
     switch (activeView) {
-      case 'dashboard':    return <Dashboard transactions={transactions} isConnected={isConnected} />;
+      case 'dashboard':    return <Dashboard transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
+      case 'ledger':       return <LedgerUpload onNavigate={setActiveView} />;
       case 'transactions': return <TransactionFeed transactions={transactions} latestTx={latestTx} isConnected={isConnected} />;
       case 'anomalies':    return <AnomalyAlerts />;
       case 'recurring':    return <RecurringCosts />;
       case 'report':       return <FinancialReport />;
       case 'simulator':    return <WhatIfSimulator />;
-      default:             return <Dashboard transactions={transactions} isConnected={isConnected} />;
+      default:             return <Dashboard transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
     }
   };
 
@@ -142,7 +146,20 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Quick Upload Ledger button */}
+            <button
+              onClick={() => setActiveView('ledger')}
+              className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
+                activeView === 'ledger'
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                  : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600 hover:border-slate-500'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" />
+              <span>Load Ledger CSV</span>
+            </button>
+
             {/* Live feed badge */}
             {isConnected ? (
               <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1">

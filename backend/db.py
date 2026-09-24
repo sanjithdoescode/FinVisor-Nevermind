@@ -171,6 +171,56 @@ async def get_all_transactions_df_raw(db_path: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+async def reset_ledger(db_path: str) -> None:
+    """Clear all transactions, anomalies, recurring costs, and reports."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM transactions")
+        await db.execute("DELETE FROM anomalies")
+        await db.execute("DELETE FROM recurring_costs")
+        await db.execute("DELETE FROM reports")
+        await db.execute("DELETE FROM whatif_scenarios")
+        await db.commit()
+
+
+async def bulk_insert_transactions(
+    db_path: str,
+    transactions: List[Dict],
+    replace_all: bool = False,
+) -> int:
+    """Insert a list of transactions. If replace_all is True, clear existing first."""
+    await init_db(db_path)
+    async with aiosqlite.connect(db_path) as db:
+        if replace_all:
+            await db.execute("DELETE FROM transactions")
+            await db.execute("DELETE FROM anomalies")
+            await db.execute("DELETE FROM recurring_costs")
+            await db.execute("DELETE FROM reports")
+
+        insert_tuples = [
+            (
+                tx["id"],
+                tx["timestamp"],
+                float(tx["amount"]),
+                tx["type"].upper(),
+                tx["category"],
+                tx["description"],
+                float(tx.get("account_balance", 0.0)),
+                tx.get("business_type", "retailer"),
+                tx.get("tags", "") if isinstance(tx.get("tags"), str) else ",".join(tx.get("tags", [])),
+            )
+            for tx in transactions
+        ]
+
+        await db.executemany("""
+            INSERT OR REPLACE INTO transactions
+            (id, timestamp, amount, type, category, description, account_balance, business_type, tags)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, insert_tuples)
+        await db.commit()
+
+    return len(insert_tuples)
+
+
 # ---------------------------------------------------------------------------
 # Anomaly helpers
 # ---------------------------------------------------------------------------

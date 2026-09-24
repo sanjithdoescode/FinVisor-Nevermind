@@ -555,6 +555,30 @@ class SMESimulator:
         conn.close()
         print(f"[✓] Saved {len(txs)} transactions to {self.db_path}")
 
+    def save_csv(self, txs: List[Transaction], csv_path: str) -> None:
+        """Export transactions to a CSV file representing the company's digital ledger."""
+        import csv
+        Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "id", "timestamp", "amount", "type", "category",
+                "description", "account_balance", "business_type", "tags"
+            ])
+            for tx in txs:
+                writer.writerow([
+                    tx.id,
+                    tx.timestamp.isoformat(),
+                    tx.amount,
+                    tx.type.value if hasattr(tx.type, "value") else str(tx.type),
+                    tx.category,
+                    tx.description,
+                    tx.account_balance,
+                    tx.business_type.value if hasattr(tx.business_type, "value") else str(tx.business_type),
+                    ",".join(tx.tags) if isinstance(tx.tags, list) else str(tx.tags)
+                ])
+        print(f"[✓] Exported {len(txs)} transactions to CSV ledger: {csv_path}")
+
     def run_live(self, interval_seconds: float = 2.0) -> None:
         """Stream a new transaction every `interval_seconds` to Redis + DB."""
         print(f"[LIVE] Streaming transactions every {interval_seconds}s  (Ctrl-C to stop)")
@@ -587,6 +611,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--redis",    default=os.getenv("REDIS_URL", "redis://localhost:6379"))
     p.add_argument("--interval", type=float, default=2.0,
                    help="Seconds between live transactions")
+    p.add_argument("--csv",      default=None,
+                   help="Optional CSV file path to export the digital ledger")
     return p.parse_args()
 
 
@@ -605,6 +631,8 @@ def main() -> None:
         txs = sim.generate_batch(n_days=n_days)
         print(f"[BATCH] Generated {len(txs)} transactions. Saving …")
         sim.save_batch(txs)
+        if args.csv:
+            sim.save_csv(txs, args.csv)
         print("[BATCH] Done.")
     else:
         sim.run_live(interval_seconds=args.interval)

@@ -22,14 +22,16 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+import csv
+import io
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 # ---------------------------------------------------------------------------
@@ -225,8 +227,212 @@ async def health_check() -> HealthCheck:
 
 
 # ---------------------------------------------------------------------------
-# Transactions
+# Transactions & Digital Ledger Ingestion
 # ---------------------------------------------------------------------------
+
+def _parse_csv_content(content: str) -> List[Dict[str, Any]]:
+    """Parse CSV text into normalized transaction dicts."""
+    reader = csv.DictReader(io.StringIO(content))
+    transactions = []
+    running_balance = 250000.0
+
+    for i, row in enumerate(reader, 1):
+        keys = {k.strip().lower().replace(" ", "_"): str(v).strip() for k, v in row.items() if k is not None}
+        if not keys:
+            continue
+
+        tx_id = keys.get("id") or keys.get("transaction_id") or f"TXN-CSV{i:05d}"
+        raw_ts = keys.get("timestamp") or keys.get("date") or keys.get("datetime") or datetime.utcnow().isoformat()
+
+        try:
+            ts_dt = datetime.fromisoformat(raw_ts)
+            ts = ts_dt.isoformat()
+        except Exception:
+            try:
+                import pandas as pd
+                ts = pd.to_datetime(raw_ts, format="ISO8601").isoformat()
+            except Exception:
+                ts = datetime.utcnow().isoformat()
+
+        try:
+            amt_str = str(keys.get("amount", "0")).replace("$", "").replace("₹", "").replace(",", "").strip()
+            amount = float(amt_str)
+        except ValueError:
+            amount = 0.0
+
+        raw_type = (keys.get("type") or keys.get("tx_type") or "DEBIT").upper()
+        tx_type = "CREDIT" if any(w in raw_type for w in ("CREDIT", "SALE", "INFLOW", "REVENUE")) else "DEBIT"
+
+        category = keys.get("category") or "general_expense"
+        desc = keys.get("description") or keys.get("desc") or category.replace("_", " ").title()
+
+        if "account_balance" in keys and keys["account_balance"]:
+            try:
+                bal_str = str(keys["account_balance"]).replace("$", "").replace("₹", "").replace(",", "").strip()
+                balance = float(bal_str)
+                running_balance = balance
+            except ValueError:
+                balance = running_balance
+        else:
+            if tx_type == "CREDIT":
+                running_balance += amount
+            else:
+                running_balance -= amount
+            balance = round(running_balance, 2)
+
+        business_type = keys.get("business_type") or BUSINESS_TYPE
+        tags = keys.get("tags") or ""
+
+        transactions.append({
+            "id": tx_id,
+            "timestamp": ts,
+            "amount": round(abs(amount), 2),
+            "type": tx_type,
+            "category": category,
+            "description": desc,
+            "account_balance": round(balance, 2),
+            "business_type": business_type,
+            "tags": tags,
+        })
+
+    return transactions
+
+
+@app.post("/upload-ledger", tags=["transactions"])
+async def upload_ledger(
+    file: UploadFile = File(...),
+    replace_all: bool = Query(True, description="Replace existing transactions"),
+    run_analysis: bool = Query(True, description="Immediately run AI analysis on the uploaded ledger"),
+) -> Dict[str, Any]:
+    """
+    Upload a company digital ledger CSV file.
+    Validates, stores transactions, and immediately runs AI financial analysis.
+    """
+    try:
+        content_bytes = await file.read()
+        content = content_bytes.decode("utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+
+    transactions = _parse_csv_content(content)
+    if not transactions:
+        raise HTTPException(status_code=400, detail="No valid transactions could be parsed from the CSV file.")
+
+    count = await database.bulk_insert_transactions(
+        db_path=DB_PATH,
+        transactions=transactions,
+        replace_all=replace_all,
+    )
+
+    credits = [t for t in transactions if t["type"] == "CREDIT"]
+    debits  = [t for t in transactions if t["type"] == "DEBIT"]
+    sum_credits = sum(t["amount"] for t in credits)
+    sum_debits  = sum(t["amount"] for t in debits)
+    timestamps = [t["timestamp"] for t in transactions]
+    btype = transactions[0].get("business_type") or BUSINESS_TYPE
+
+    report_result = None
+    if run_analysis:
+        try:
+            report = await run_full_analysis(db_path=DB_PATH, business_type=btype)
+            report_result = _format_frontend_report(report.model_dump(mode="json"))
+        except Exception as e:
+            report_result = {"error": f"Analysis failed: {e}"}
+
+    return {
+        "status": "success",
+        "message": f"Successfully ingested digital ledger: {count} transactions.",
+        "filename": file.filename,
+        "total_transactions": count,
+        "credit_count": len(credits),
+        "debit_count": len(debits),
+        "total_revenue": round(sum_credits, 2),
+        "total_expenses": round(sum_debits, 2),
+        "net_cash_flow": round(sum_credits - sum_debits, 2),
+        "date_range": {
+            "start": min(timestamps) if timestamps else None,
+            "end": max(timestamps) if timestamps else None,
+        },
+        "business_type": btype,
+        "report": report_result,
+    }
+
+
+@app.get("/demo-ledger", tags=["transactions"])
+async def download_demo_ledger() -> FileResponse:
+    """Download the synthetic demo digital ledger CSV file."""
+    csv_path = PROJECT_ROOT / "data" / "demo_company_ledger.csv"
+    if not csv_path.exists():
+        from simulator.simulator import SMESimulator
+        sim = SMESimulator(business_type=BUSINESS_TYPE, db_path=DB_PATH)
+        txs = sim.generate_batch(n_days=90)
+        sim.save_csv(txs, str(csv_path))
+
+    return FileResponse(
+        path=str(csv_path),
+        media_type="text/csv",
+        filename="company_digital_ledger_demo.csv",
+    )
+
+
+@app.post("/load-demo-ledger", tags=["transactions"])
+async def load_demo_ledger(
+    run_analysis: bool = Query(True, description="Immediately run AI analysis"),
+) -> Dict[str, Any]:
+    """
+    One-click loader for the demo synthetic digital ledger CSV.
+    Loads data/demo_company_ledger.csv into the system and triggers AI analysis.
+    """
+    csv_path = PROJECT_ROOT / "data" / "demo_company_ledger.csv"
+    if not csv_path.exists():
+        from simulator.simulator import SMESimulator
+        sim = SMESimulator(business_type=BUSINESS_TYPE, db_path=DB_PATH)
+        txs = sim.generate_batch(n_days=90)
+        sim.save_csv(txs, str(csv_path))
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    transactions = _parse_csv_content(content)
+    count = await database.bulk_insert_transactions(
+        db_path=DB_PATH,
+        transactions=transactions,
+        replace_all=True,
+    )
+
+    credits = [t for t in transactions if t["type"] == "CREDIT"]
+    debits  = [t for t in transactions if t["type"] == "DEBIT"]
+    sum_credits = sum(t["amount"] for t in credits)
+    sum_debits  = sum(t["amount"] for t in debits)
+    timestamps = [t["timestamp"] for t in transactions]
+    btype = transactions[0].get("business_type") or BUSINESS_TYPE
+
+    report_result = None
+    if run_analysis:
+        try:
+            report = await run_full_analysis(db_path=DB_PATH, business_type=btype)
+            report_result = _format_frontend_report(report.model_dump(mode="json"))
+        except Exception as e:
+            report_result = {"error": f"Analysis failed: {e}"}
+
+    return {
+        "status": "success",
+        "message": f"Successfully loaded synthetic company digital ledger: {count} transactions.",
+        "filename": "demo_company_ledger.csv",
+        "total_transactions": count,
+        "credit_count": len(credits),
+        "debit_count": len(debits),
+        "total_revenue": round(sum_credits, 2),
+        "total_expenses": round(sum_debits, 2),
+        "net_cash_flow": round(sum_credits - sum_debits, 2),
+        "date_range": {
+            "start": min(timestamps) if timestamps else None,
+            "end": max(timestamps) if timestamps else None,
+        },
+        "business_type": btype,
+        "report": report_result,
+    }
+
 
 @app.get("/transactions", response_model=PaginatedTransactions, tags=["transactions"])
 async def list_transactions(
