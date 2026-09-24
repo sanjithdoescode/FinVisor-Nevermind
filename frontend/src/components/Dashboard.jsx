@@ -3,7 +3,7 @@
  * Shows KPI cards, cash flow chart, category breakdown, anomaly panel, live ticker.
  */
 
-import { useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend
@@ -15,17 +15,20 @@ import {
 } from 'lucide-react';
 
 import {
+  getSummary, getAnomalies, getCashflow, getSpendingByCategory
+} from '../services/api';
+import {
   MOCK_SUMMARY, MOCK_CASHFLOW, MOCK_SPENDING_BY_CATEGORY, MOCK_ANOMALIES, MOCK_TRANSACTIONS
 } from '../data/mockData';
 
 // ── Helpers ──────────────────────────────────
-const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-const fmtSmall = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+const fmtSmall = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(n);
 
 const SEVERITY_COLORS = { critical: 'bg-red-500', high: 'bg-orange-500', medium: 'bg-yellow-500', low: 'bg-blue-500' };
 
 // ── KPI Card ─────────────────────────────────
-function KPICard({ title, value, change, positive, icon: Icon, prefix = '$' }) {
+function KPICard({ title, value, change, positive, icon: Icon, prefix = '₹' }) {
   const isPositive = change >= 0;
   const trendColor = positive ? (isPositive ? 'text-green-400' : 'text-red-400') : (isPositive ? 'text-red-400' : 'text-green-400');
   const TrendIcon = isPositive ? ArrowUpRight : ArrowDownRight;
@@ -41,7 +44,7 @@ function KPICard({ title, value, change, positive, icon: Icon, prefix = '$' }) {
       <p className="text-2xl font-bold text-white mb-1">{value}</p>
       <div className={`flex items-center gap-1 text-sm ${trendColor}`}>
         <TrendIcon className="w-3.5 h-3.5" />
-        <span>{Math.abs(change)}% vs last month</span>
+        <span>{Math.abs(change)}% vs target</span>
       </div>
     </div>
   );
@@ -84,7 +87,7 @@ function LiveTicker({ transactions }) {
             style={{ animation: 'fadeIn 0.3s ease' }}
           >
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-slate-400 truncate max-w-32">{tx.description.split(' - ')[0]}</span>
+              <span className="text-xs text-slate-400 truncate max-w-32">{tx.description?.split(' - ')[0]}</span>
               {tx.anomalous && <AlertTriangle className="w-3 h-3 text-orange-400 flex-shrink-0" />}
             </div>
             <p className={`text-sm font-semibold ${tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
@@ -99,10 +102,56 @@ function LiveTicker({ transactions }) {
 
 // ── Main Dashboard ────────────────────────────
 export default function Dashboard({ transactions, isConnected, onNavigate }) {
-  const summary = MOCK_SUMMARY;
-  const cashflow = MOCK_CASHFLOW;
-  const categories = MOCK_SPENDING_BY_CATEGORY;
-  const anomalies = MOCK_ANOMALIES.filter(a => !a.acknowledged);
+  const [summary, setSummary] = useState(MOCK_SUMMARY);
+  const [cashflow, setCashflow] = useState(MOCK_CASHFLOW);
+  const [categories, setCategories] = useState(MOCK_SPENDING_BY_CATEGORY);
+  const [anomalies, setAnomalies] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDashboardData = async () => {
+      try {
+        const [sumData, anomData, cfData, catData] = await Promise.allSettled([
+          getSummary(),
+          getAnomalies(),
+          getCashflow('90d'),
+          getSpendingByCategory(),
+        ]);
+
+        if (isMounted) {
+          if (sumData.status === 'fulfilled' && sumData.value && sumData.value.totalRevenue > 0) {
+            setSummary(sumData.value);
+          }
+          if (anomData.status === 'fulfilled' && anomData.value?.anomalies) {
+            const rawList = anomData.value.anomalies.map((a) => ({
+              id: a.id,
+              type: a.type ? a.type.replace(/_/g, ' ').toUpperCase() : 'ANOMALY',
+              severity: a.severity || 'medium',
+              description: a.description,
+              amount: a.metadata?.amount || a.metadata?.order_amount || 0,
+              evidence: a.transaction_id ? [a.transaction_id] : (a.evidence?.match(/TXN-[A-F0-9]+/g) || []),
+            }));
+            setAnomalies(rawList);
+          }
+          if (cfData.status === 'fulfilled' && Array.isArray(cfData.value) && cfData.value.length > 0) {
+            setCashflow(cfData.value.map(c => ({
+              date: c.date,
+              revenue: c.inflow,
+              expenses: c.outflow,
+              cashflow: c.net,
+            })));
+          }
+          if (catData.status === 'fulfilled' && Array.isArray(catData.value) && catData.value.length > 0) {
+            setCategories(catData.value);
+          }
+        }
+      } catch (err) {
+        console.warn('Dashboard fetch error:', err);
+      }
+    };
+    fetchDashboardData();
+    return () => { isMounted = false; };
+  }, []);
 
   return (
     <div className="space-y-6">

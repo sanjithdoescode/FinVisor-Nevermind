@@ -3,13 +3,12 @@
  * Shows executive summary, analysis sections, action items, transaction evidence.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   FileText, RefreshCw, Download, CheckCircle, AlertTriangle,
-  Clock, TrendingUp, Loader2, Shield
+  Clock, TrendingUp, Loader2, Shield, DollarSign, Activity, Sparkles
 } from 'lucide-react';
-import { generateReport } from '../services/api';
-import { MOCK_REPORT } from '../data/mockData';
+import { getReport, generateReport } from '../services/api';
 
 const URGENCY_CONFIG = {
   critical: { color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30',    label: 'Critical' },
@@ -23,6 +22,9 @@ const SCORE_COLOR = (score) => {
   if (score >= 60) return 'text-yellow-400';
   return 'text-red-400';
 };
+
+const fmt = (n) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
 function ScoreRing({ score }) {
   const radius = 40;
@@ -53,10 +55,41 @@ function ScoreRing({ score }) {
   );
 }
 
-export default function FinancialReport() {
-  const [report, setReport] = useState(MOCK_REPORT);
-  const [loading, setLoading] = useState(false);
+export default function FinancialReport({ initialReport, onNavigate }) {
+  const [report, setReport] = useState(initialReport || null);
+  const [loading, setLoading] = useState(!initialReport);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (initialReport) {
+      setReport(initialReport);
+      setLoading(false);
+      return;
+    }
+    let isMounted = true;
+    const fetchReport = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await getReport();
+        if (isMounted && data) {
+          setReport(data);
+        }
+      } catch (err) {
+        // If no report found yet, generate it from the database
+        try {
+          const fresh = await generateReport();
+          if (isMounted && fresh) setReport(fresh);
+        } catch (genErr) {
+          if (isMounted) setError(genErr.response?.data?.detail || 'Could not load financial report. Please ensure digital ledger is loaded.');
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    fetchReport();
+    return () => { isMounted = false; };
+  }, [initialReport]);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -65,9 +98,7 @@ export default function FinancialReport() {
       const data = await generateReport();
       setReport(data);
     } catch (e) {
-      // Fall back to mock with a "freshness" update
-      setReport({ ...MOCK_REPORT, generatedAt: new Date().toISOString() });
-      setError('Backend not connected — showing demo report.');
+      setError(e.response?.data?.detail || 'Analysis generation failed. Check API key and database.');
     } finally {
       setLoading(false);
     }
@@ -77,8 +108,10 @@ export default function FinancialReport() {
     window.print();
   };
 
-  const fmtTime = (iso) =>
-    new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  const fmtTime = (iso) => {
+    if (!iso) return 'Just now';
+    return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  };
 
   return (
     <div className="space-y-6">
@@ -131,21 +164,59 @@ export default function FinancialReport() {
       {/* Report Content */}
       {report && !loading && (
         <div className="space-y-6">
+          {/* Grounded Ledger Metrics Ribbon */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              <span className="text-xs text-slate-400 block mb-1">Total Ledger Revenue</span>
+              <p className="text-xl font-bold text-emerald-400">{fmt(report.total_revenue || 0)}</p>
+              <span className="text-[11px] text-slate-500 capitalize">{report.business_type || 'Retail'} Business</span>
+            </div>
+
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              <span className="text-xs text-slate-400 block mb-1">Total Operating Expenses</span>
+              <p className="text-xl font-bold text-rose-400">{fmt(report.total_expenses || 0)}</p>
+              <span className="text-[11px] text-slate-500">{report.recurring_cost_count || 0} recurring costs</span>
+            </div>
+
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              <span className="text-xs text-slate-400 block mb-1">Net Cash Flow</span>
+              <p className={`text-xl font-bold ${(report.net_profit || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {fmt(report.net_profit || 0)}
+              </p>
+              <span className="text-[11px] text-slate-500">Margin: {report.profit_margin_pct || 0}%</span>
+            </div>
+
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+              <span className="text-xs text-slate-400 block mb-1">Cash Runway</span>
+              <p className="text-xl font-bold text-blue-400">
+                {report.cash_runway_days ?? 'N/A'} {typeof report.cash_runway_days === 'number' ? 'days' : ''}
+              </p>
+              <span className="text-[11px] text-slate-500">Burn: ₹{Math.round(report.burn_rate_daily || 0).toLocaleString()}/day</span>
+            </div>
+          </div>
+
           {/* Executive Summary Card */}
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
             <div className="flex flex-wrap items-start gap-6">
               {/* Score ring */}
               <div className="text-center">
-                <ScoreRing score={report.overallScore} />
+                <ScoreRing score={report.overallScore ?? report.health_score ?? 70} />
                 <p className="text-xs text-slate-400 mt-2">Health Score</p>
               </div>
               {/* Summary */}
               <div className="flex-1 min-w-52">
-                <div className="flex items-center gap-2 mb-3">
-                  <Shield className="w-4 h-4 text-blue-400" />
-                  <h3 className="font-semibold text-slate-200">Executive Summary</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-blue-400" />
+                    <h3 className="font-semibold text-slate-200">Executive Summary</h3>
+                  </div>
+                  {report.period_start && (
+                    <span className="text-xs text-slate-400 bg-slate-900 border border-slate-700 px-2.5 py-1 rounded-full">
+                      Ledger: {String(report.period_start).slice(0, 10)} → {String(report.period_end).slice(0, 10)} ({report.total_transactions} txns)
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm text-slate-300 leading-relaxed">{report.executiveSummary}</p>
+                <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">{report.executiveSummary}</p>
               </div>
             </div>
           </div>
@@ -194,10 +265,28 @@ export default function FinancialReport() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-200">{item.action}</p>
                       <p className={`text-xs mt-0.5 ${urgency.color}`}>Impact: {item.impact}</p>
+                      {item.transaction_refs && item.transaction_refs.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          <span className="text-[11px] text-slate-500">Refs:</span>
+                          {item.transaction_refs.map(ref => (
+                            <span key={ref} className="text-[11px] bg-slate-800 text-blue-300 font-mono px-1.5 py-0.5 rounded border border-slate-700">
+                              {ref}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <span className={`flex-shrink-0 text-xs font-medium px-2 py-1 rounded border ${urgency.bg} ${urgency.color} ${urgency.border}`}>
-                      {urgency.label}
-                    </span>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      {item.potential_saving > 0 && (
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">Est. Impact</span>
+                          <span className="text-xs font-bold text-emerald-400">+{fmt(item.potential_saving)}</span>
+                        </div>
+                      )}
+                      <span className={`text-xs font-medium px-2 py-1 rounded border ${urgency.bg} ${urgency.color} ${urgency.border}`}>
+                        {urgency.label}
+                      </span>
+                    </div>
                   </div>
                 );
               })}

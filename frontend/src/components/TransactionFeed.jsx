@@ -4,11 +4,12 @@
  */
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, Filter, ChevronLeft, ChevronRight, AlertTriangle, Zap } from 'lucide-react';
+import { Search, Filter, ChevronLeft, ChevronRight, AlertTriangle, Zap, Loader2 } from 'lucide-react';
+import { getTransactions } from '../services/api';
 import { MOCK_TRANSACTIONS } from '../data/mockData';
 
 const fmtAmt = (n) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
 const fmtDate = (iso) => {
   if (!iso) return '-';
@@ -17,18 +18,40 @@ const fmtDate = (iso) => {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
-const CATEGORIES = ['All', 'Revenue', 'Payroll', 'Infrastructure', 'Subscriptions', 'Marketing', 'Rent', 'Utilities', 'Office', 'Unknown'];
+const CATEGORIES = ['All', 'salaries', 'rent', 'logistics', 'marketing', 'utilities', 'subscriptions', 'pos_fees', 'inventory_purchase', 'sales', 'Revenue', 'Infrastructure'];
 const TYPES = ['All', 'CREDIT', 'DEBIT'];
 
 export default function TransactionFeed({ transactions = [], latestTx, isConnected }) {
+  const [dbTransactions, setDbTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('All');
   const [filterCategory, setFilterCategory] = useState('All');
   const [page, setPage] = useState(1);
   const [flashId, setFlashId] = useState(null);
   const prevLatestRef = useRef(null);
+
+  // Fetch digital ledger transactions from backend
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLedger = async () => {
+      setLoading(true);
+      try {
+        const res = await getTransactions({ page: 1, page_size: 500 });
+        if (isMounted && res && Array.isArray(res.items) && res.items.length > 0) {
+          setDbTransactions(res.items);
+        }
+      } catch (err) {
+        console.warn('Could not load ledger transactions:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    fetchLedger();
+    return () => { isMounted = false; };
+  }, []);
 
   // Flash animation when new live tx arrives
   useEffect(() => {
@@ -40,11 +63,12 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
     }
   }, [latestTx]);
 
-  // Merge live + mock data, deduplicate by ID, normalize fields
+  // Merge database ledger transactions + live incoming feed
   const allTxns = useMemo(() => {
     const map = new Map();
-    // 1. Mock baseline
-    MOCK_TRANSACTIONS.forEach((tx) => {
+    // 1. Digital ledger database rows
+    const base = dbTransactions.length > 0 ? dbTransactions : MOCK_TRANSACTIONS;
+    base.forEach((tx) => {
       map.set(tx.id, {
         ...tx,
         date: tx.date || tx.timestamp || new Date().toISOString(),
@@ -63,7 +87,7 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
     });
     const list = Array.from(map.values());
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions]);
+  }, [dbTransactions, transactions]);
 
   const filtered = useMemo(() => {
     return allTxns.filter((tx) => {

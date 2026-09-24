@@ -43,18 +43,27 @@ const NAV_ITEMS = [
 export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [activeReport, setActiveReport] = useState(null);
+  const [ledgerCount, setLedgerCount] = useState(0);
   const { transactions, isConnected, latestTx } = useLiveTransactions();
+
+  const handleLedgerLoaded = (data) => {
+    if (data && data.report) {
+      setActiveReport(data.report);
+    }
+    setLedgerCount(c => c + 1);
+  };
 
   const renderView = () => {
     switch (activeView) {
-      case 'dashboard':    return <Dashboard transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
-      case 'ledger':       return <LedgerUpload onNavigate={setActiveView} />;
-      case 'transactions': return <TransactionFeed transactions={transactions} latestTx={latestTx} isConnected={isConnected} />;
-      case 'anomalies':    return <AnomalyAlerts />;
-      case 'recurring':    return <RecurringCosts />;
-      case 'report':       return <FinancialReport />;
+      case 'dashboard':    return <Dashboard key={ledgerCount} transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
+      case 'ledger':       return <LedgerUpload onNavigate={setActiveView} onLedgerLoaded={handleLedgerLoaded} />;
+      case 'transactions': return <TransactionFeed key={ledgerCount} transactions={transactions} latestTx={latestTx} isConnected={isConnected} />;
+      case 'anomalies':    return <AnomalyAlerts key={ledgerCount} onNavigate={setActiveView} />;
+      case 'recurring':    return <RecurringCosts key={ledgerCount} onNavigate={setActiveView} />;
+      case 'report':       return <FinancialReport key={activeReport?.id || ledgerCount} initialReport={activeReport} onNavigate={setActiveView} />;
       case 'simulator':    return <WhatIfSimulator />;
-      default:             return <Dashboard transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
+      default:             return <Dashboard key={ledgerCount} transactions={transactions} isConnected={isConnected} onNavigate={setActiveView} />;
     }
   };
 

@@ -67,7 +67,7 @@ from simulator.schemas import (
 # Config
 # ---------------------------------------------------------------------------
 DB_PATH       = os.getenv("DATABASE_URL", "sqlite:///./finvisor.db").replace("sqlite:///", "")
-BUSINESS_TYPE = os.getenv("BUSINESS_TYPE", "retailer")
+BUSINESS_TYPE = os.getenv("BUSINESS_TYPE", "retailer").strip("`'\" \t\r\n")
 REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # Resolve relative DB path to absolute
@@ -336,7 +336,7 @@ async def upload_ledger(
     if run_analysis:
         try:
             report = await run_full_analysis(db_path=DB_PATH, business_type=btype)
-            report_result = _format_frontend_report(report.model_dump(mode="json"))
+            report_result = await _format_frontend_report(report.model_dump(mode="json"))
         except Exception as e:
             report_result = {"error": f"Analysis failed: {e}"}
 
@@ -412,7 +412,7 @@ async def load_demo_ledger(
     if run_analysis:
         try:
             report = await run_full_analysis(db_path=DB_PATH, business_type=btype)
-            report_result = _format_frontend_report(report.model_dump(mode="json"))
+            report_result = await _format_frontend_report(report.model_dump(mode="json"))
         except Exception as e:
             report_result = {"error": f"Analysis failed: {e}"}
 
@@ -514,26 +514,46 @@ async def transactions_live(
 # Analysis & Reports
 # ---------------------------------------------------------------------------
 
-def _format_frontend_report(report_dict: Dict) -> Dict:
+async def _format_frontend_report(report_dict: Dict) -> Dict:
     margin = report_dict.get("profit_margin_pct", 0)
     anom_count = report_dict.get("anomaly_count", 0)
     score = max(25, min(95, int(65 + margin * 0.4 - min(anom_count, 15) * 1.5)))
 
     anomalies = report_dict.get("anomalies", [])
-    anom_refs = [a.get("transaction_id") for a in anomalies if a.get("transaction_id")]
+    if not anomalies:
+        try:
+            anomalies = await database.get_anomalies(DB_PATH)
+        except Exception:
+            anomalies = []
+
     recurring = report_dict.get("recurring_costs", [])
-    rec_refs = [tx for r in recurring for tx in r.get("transaction_ids", [])][:6]
+    if not recurring:
+        try:
+            recurring = await database.get_recurring_costs(DB_PATH)
+        except Exception:
+            recurring = []
+
+    anom_refs = [a.get("transaction_id") for a in anomalies if a.get("transaction_id")]
+    rec_refs = [tx for r in recurring for tx in r.get("transaction_ids", [])]
+
+    if not anom_refs:
+        for action in report_dict.get("action_items", []):
+            for ref in action.get("transaction_refs", []):
+                if ref not in anom_refs:
+                    anom_refs.append(ref)
+
+    total_rec_monthly = sum(r.get("monthly_burden", 0) for r in recurring)
 
     sections = [
         {
             "title": "🚨 Anomalies & Irregularities",
             "content": report_dict.get("spending_analysis") or f"Detected {anom_count} anomalies including statistical outliers, duplicate payments, and timing discrepancies.",
-            "references": anom_refs[:4]
+            "references": anom_refs[:6]
         },
         {
             "title": "💸 Expense & Recurring Cost Analysis",
-            "content": f"Recurring costs account for a monthly burden of ₹{sum(r.get('monthly_burden', 0) for r in recurring):,.2f}. Regular review of software subscriptions and vendor contracts recommended.",
-            "references": rec_refs[:4]
+            "content": f"Recurring commitments account for an estimated monthly burden of ₹{total_rec_monthly:,.2f} across {len(recurring)} vendor and subscription agreements. Regular review is advised.",
+            "references": rec_refs[:6]
         },
         {
             "title": "📈 Cash Flow Forecast & Risk Assessment",
@@ -550,14 +570,20 @@ def _format_frontend_report(report_dict: Dict) -> Dict:
                 "priority": item.get("priority", i),
                 "action": item.get("title", f"Action {i}"),
                 "impact": item.get("description", "Positive financial impact"),
-                "urgency": "critical" if i == 1 else "high" if i == 2 else "medium" if i <= 4 else "low"
+                "urgency": "critical" if i == 1 else "high" if i == 2 else "medium" if i <= 4 else "low",
+                "transaction_refs": item.get("transaction_refs", []),
+                "potential_saving": item.get("potential_saving", 0),
             })
     else:
-        action_plan = [
-            {"priority": 1, "action": "Investigate flagged outlier debit transactions", "impact": "Eliminate unauthorized expenses", "urgency": "critical"},
-            {"priority": 2, "action": "Review recurring subscription duplicate payments", "impact": "Recover subscription duplicate fees", "urgency": "high"},
-            {"priority": 3, "action": "Liquidate or reprice inventory older than 14 days", "impact": "Unfreeze working capital", "urgency": "medium"},
-        ]
+        for i, a in enumerate(anomalies[:4], 1):
+            action_plan.append({
+                "priority": i,
+                "action": f"Audit {a.get('type', 'anomaly').replace('_', ' ').title()}",
+                "impact": a.get("description", "Eliminate unauthorized expenses"),
+                "urgency": "critical" if i == 1 else "high" if i == 2 else "medium",
+                "transaction_refs": [a.get("transaction_id")] if a.get("transaction_id") else [],
+                "potential_saving": a.get("metadata", {}).get("amount", 2000),
+            })
 
     res = dict(report_dict)
     res["id"] = report_dict.get("id")
@@ -584,7 +610,7 @@ async def trigger_analysis(
     try:
         report = await run_full_analysis(db_path=DB_PATH, business_type=btype)
         rep_dict = report.model_dump(mode="json")
-        return _format_frontend_report(rep_dict)
+        return await _format_frontend_report(rep_dict)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -603,7 +629,7 @@ async def get_report() -> Dict[str, Any]:
             status_code = 404,
             detail      = "No report found. POST /analyze first.",
         )
-    return _format_frontend_report(report)
+    return await _format_frontend_report(report)
 
 
 # ---------------------------------------------------------------------------

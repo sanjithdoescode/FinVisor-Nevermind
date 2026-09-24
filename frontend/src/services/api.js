@@ -64,6 +64,7 @@ export const getCashFlow = async (period = '30d') => {
   const response = await api.get('/cashflow', { params: { period } });
   return response.data;
 };
+export const getCashflow = getCashFlow;
 
 /** Fetch spending by category */
 export const getSpendingByCategory = async () => {

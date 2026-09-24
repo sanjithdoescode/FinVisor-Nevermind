@@ -1,21 +1,10 @@
-/**
- * RecurringCosts.jsx - Recurring Cost Analysis
- * Table of recurring expenses, pie chart breakdown, hidden costs panel.
- */
-
+import { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { RefreshCw, AlertTriangle, CheckCircle, TrendingDown } from 'lucide-react';
-import { MOCK_RECURRING_COSTS, MOCK_RECURRING_SUMMARY } from '../data/mockData';
+import { RefreshCw, AlertTriangle, CheckCircle, TrendingDown, Loader2 } from 'lucide-react';
+import { getRecurringCosts } from '../services/api';
 
 const fmtAmt = (n) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-
-const PIE_DATA = [
-  { name: 'Necessary Recurring', value: 714236, color: '#3b82f6' },
-  { name: 'Suspicious Subscriptions', value: 5940, color: '#f59e0b' },
-  { name: 'Hidden / Idle Costs', value: 7382, color: '#ef4444' },
-  { name: 'One-Time Expenses', value: 145146, color: '#64748b' },
-];
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
 const TAG_CONFIG = {
   necessary:  { label: 'Necessary',  bg: 'bg-green-500/10',  text: 'text-green-400',  border: 'border-green-500/20',  icon: CheckCircle },
@@ -35,12 +24,68 @@ function CustomPieTooltip({ active, payload }) {
   );
 }
 
-export default function RecurringCosts() {
-  const costs = MOCK_RECURRING_COSTS;
-  const summary = MOCK_RECURRING_SUMMARY;
+export default function RecurringCosts({ onNavigate }) {
+  const [costs, setCosts] = useState([]);
+  const [summary, setSummary] = useState({
+    totalMonthlyRecurring: 0,
+    totalAnnualRecurring: 0,
+    subscriptionCount: 0,
+    hiddenCosts: [],
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchCosts = async () => {
+      setLoading(true);
+      try {
+        const data = await getRecurringCosts();
+        if (isMounted && data && Array.isArray(data.costs)) {
+          const normCosts = data.costs.map((c) => ({
+            id: c.id,
+            merchant: c.merchant || c.description,
+            category: c.category,
+            frequency: c.frequency_days ? `Every ${Math.round(c.frequency_days)} days` : 'Monthly',
+            amount: c.average_amount,
+            annualCost: c.monthly_burden * 12,
+            tag: c.is_suspicious ? 'suspicious' : 'necessary',
+            notes: c.notes || `Total paid ₹${Math.round(c.total_paid || 0).toLocaleString()} across ${c.occurrence_count} transactions`,
+            transaction_ids: c.transaction_ids || [],
+          }));
+          setCosts(normCosts);
+
+          const monthly = data.total_monthly_burden || 0;
+          const hidden = normCosts
+            .filter((c) => c.amount < 3000 && c.amount > 0)
+            .map((c) => ({ name: c.merchant, monthly: c.amount, note: c.notes }))
+            .slice(0, 5);
+
+          setSummary({
+            totalMonthlyRecurring: monthly,
+            totalAnnualRecurring: monthly * 12,
+            subscriptionCount: data.summary?.subscriptions || normCosts.length,
+            hiddenCosts: hidden,
+          });
+        }
+      } catch (err) {
+        console.warn('Could not load recurring costs from API:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    fetchCosts();
+    return () => { isMounted = false; };
+  }, []);
 
   const suspiciousCosts = costs.filter(c => c.tag === 'suspicious');
   const totalSuspiciousAnnual = suspiciousCosts.reduce((sum, c) => sum + c.annualCost, 0);
+
+  const pieData = [
+    { name: 'Salaries & Staff', value: costs.filter(c => c.category === 'salaries').reduce((s, c) => s + c.annualCost, 0), color: '#3b82f6' },
+    { name: 'Rent & Premises', value: costs.filter(c => c.category === 'rent').reduce((s, c) => s + c.annualCost, 0), color: '#8b5cf6' },
+    { name: 'SaaS & Subscriptions', value: costs.filter(c => c.category === 'subscriptions').reduce((s, c) => s + c.annualCost, 0), color: '#10b981' },
+    { name: 'Hidden Fees & Utilities', value: costs.filter(c => !['salaries', 'rent', 'subscriptions'].includes(c.category)).reduce((s, c) => s + c.annualCost, 0), color: '#f59e0b' },
+  ].filter(p => p.value > 0);
 
   return (
     <div className="space-y-6">
@@ -58,17 +103,17 @@ export default function RecurringCosts() {
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
           <p className="text-xs text-slate-400 mb-1">Annual Recurring Burden</p>
           <p className="text-2xl font-bold text-white">{fmtAmt(summary.totalAnnualRecurring)}</p>
-          <p className="text-xs text-slate-500 mt-1">10 recurring items</p>
+          <p className="text-xs text-slate-500 mt-1">{costs.length} recurring items identified</p>
         </div>
         <div className="bg-slate-800 border border-orange-500/30 rounded-xl p-5">
-          <p className="text-xs text-slate-400 mb-1">Suspicious Subscriptions</p>
-          <p className="text-2xl font-bold text-orange-400">{fmtAmt(totalSuspiciousAnnual)}/yr</p>
-          <p className="text-xs text-orange-400/70 mt-1">{suspiciousCosts.length} subscriptions flagged</p>
+          <p className="text-xs text-slate-400 mb-1">Subscriptions &amp; Small Fees</p>
+          <p className="text-2xl font-bold text-orange-400">{summary.subscriptionCount} Active</p>
+          <p className="text-xs text-orange-400/70 mt-1">Shopify, QuickBooks, POS, Utilities</p>
         </div>
-        <div className="bg-slate-800 border border-red-500/30 rounded-xl p-5">
+        <div className="bg-slate-800 border border-emerald-500/30 rounded-xl p-5">
           <p className="text-xs text-slate-400 mb-1">Potential Annual Savings</p>
-          <p className="text-2xl font-bold text-green-400">+{fmtAmt(totalSuspiciousAnnual * 0.7)}</p>
-          <p className="text-xs text-slate-500 mt-1">If suspicious items eliminated</p>
+          <p className="text-2xl font-bold text-emerald-400">+{fmtAmt(summary.totalAnnualRecurring * 0.08)}</p>
+          <p className="text-xs text-slate-500 mt-1">Via SaaS consolidation &amp; fee audits</p>
         </div>
       </div>
 
@@ -80,7 +125,7 @@ export default function RecurringCosts() {
           <ResponsiveContainer width="100%" height={260}>
             <PieChart>
               <Pie
-                data={PIE_DATA}
+                data={pieData.length > 0 ? pieData : [{ name: 'Fixed Operating', value: 100000, color: '#3b82f6' }]}
                 cx="50%"
                 cy="50%"
                 innerRadius={65}
@@ -88,7 +133,7 @@ export default function RecurringCosts() {
                 paddingAngle={3}
                 dataKey="value"
               >
-                {PIE_DATA.map((entry, index) => (
+                {(pieData.length > 0 ? pieData : [{ color: '#3b82f6' }]).map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>

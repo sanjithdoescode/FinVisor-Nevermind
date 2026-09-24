@@ -3,9 +3,9 @@
  * Lists all detected anomalies with severity badges, evidence, and acknowledge button.
  */
 
-import { useState } from 'react';
-import { AlertTriangle, CheckCircle, Filter, Eye } from 'lucide-react';
-import { MOCK_ANOMALIES } from '../data/mockData';
+import { useState, useEffect } from 'react';
+import { AlertTriangle, CheckCircle, Filter, Eye, Loader2, ArrowRight } from 'lucide-react';
+import { getAnomalies, acknowledgeAnomaly } from '../services/api';
 
 const SEVERITY_CONFIG = {
   critical: { label: 'CRITICAL', bg: 'bg-red-500', text: 'text-red-400', border: 'border-red-500/30', badge: 'bg-red-500/10 text-red-400' },
@@ -16,15 +16,61 @@ const SEVERITY_CONFIG = {
 
 const SEVERITIES = ['All', 'critical', 'high', 'medium', 'low'];
 
-const fmtAmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtAmt = (n) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+const fmtDate = (iso) => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
-export default function AnomalyAlerts() {
-  const [anomalies, setAnomalies] = useState(MOCK_ANOMALIES);
+export default function AnomalyAlerts({ onNavigate }) {
+  const [anomalies, setAnomalies] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [filterSeverity, setFilterSeverity] = useState('All');
   const [expandedId, setExpandedId] = useState(null);
 
-  const handleAcknowledge = (id) => {
+  useEffect(() => {
+    let isMounted = true;
+    const fetchAnomalies = async () => {
+      setLoading(true);
+      try {
+        const data = await getAnomalies();
+        if (isMounted && data && Array.isArray(data.anomalies)) {
+          const norm = data.anomalies.map((a) => {
+            const rawEv = a.evidence || '';
+            const evidenceList = a.transaction_id
+              ? [a.transaction_id]
+              : (rawEv.match(/TXN-[A-F0-9]+/g) || []);
+            return {
+              id: a.id,
+              type: a.type ? a.type.replace(/_/g, ' ').toUpperCase() : 'ANOMALY',
+              severity: a.severity || 'medium',
+              description: a.description,
+              amount: a.metadata?.amount || a.metadata?.order_amount || 0,
+              date: a.detected_at || new Date().toISOString(),
+              evidence: evidenceList,
+              recommendedAction: a.evidence || 'Verify vendor invoice and payment authorization.',
+              acknowledged: false,
+            };
+          });
+          setAnomalies(norm);
+        }
+      } catch (err) {
+        console.warn('Could not load anomalies from API:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    fetchAnomalies();
+    return () => { isMounted = false; };
+  }, []);
+
+  const handleAcknowledge = async (id) => {
+    try {
+      await acknowledgeAnomaly(id);
+    } catch (_) {}
     setAnomalies(prev => prev.map(a => a.id === id ? { ...a, acknowledged: true } : a));
   };
 
