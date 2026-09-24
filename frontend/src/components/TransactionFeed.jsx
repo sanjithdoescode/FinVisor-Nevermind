@@ -10,8 +10,12 @@ import { MOCK_TRANSACTIONS } from '../data/mockData';
 const fmtAmt = (n) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
-const fmtDate = (iso) =>
-  new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtDate = (iso) => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 const PAGE_SIZE = 10;
 
@@ -36,14 +40,29 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
     }
   }, [latestTx]);
 
-  // Merge live + mock data, deduplicate
+  // Merge live + mock data, deduplicate by ID, normalize fields
   const allTxns = useMemo(() => {
-    const liveIds = new Set(transactions.map(t => t.id));
-    const merged = [
-      ...transactions,
-      ...MOCK_TRANSACTIONS.filter(t => !liveIds.has(t.id)),
-    ];
-    return merged.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const map = new Map();
+    // 1. Mock baseline
+    MOCK_TRANSACTIONS.forEach((tx) => {
+      map.set(tx.id, {
+        ...tx,
+        date: tx.date || tx.timestamp || new Date().toISOString(),
+        balance: tx.balance ?? tx.account_balance ?? 0,
+      });
+    });
+    // 2. Real / live feed takes precedence
+    transactions.forEach((tx) => {
+      if (tx && tx.id) {
+        map.set(tx.id, {
+          ...tx,
+          date: tx.date || tx.timestamp || new Date().toISOString(),
+          balance: tx.balance ?? tx.account_balance ?? 0,
+        });
+      }
+    });
+    const list = Array.from(map.values());
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [transactions]);
 
   const filtered = useMemo(() => {
@@ -138,12 +157,13 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
                   <td colSpan={7} className="text-center py-12 text-slate-400">No transactions match your filters</td>
                 </tr>
               ) : (
-                paginated.map((tx) => {
+                paginated.map((tx, idx) => {
                   const isFlashing = flashId === tx.id;
                   const isAnomaly = tx.anomalous;
+                  const rowKey = `${tx.id || 'tx'}-${(page - 1) * PAGE_SIZE + idx}`;
                   return (
                     <tr
-                      key={tx.id}
+                      key={rowKey}
                       className={`hover:bg-slate-700/50 transition-colors ${
                         isFlashing ? 'bg-blue-500/10' : ''
                       } ${isAnomaly ? 'border-l-2 border-l-orange-500' : ''}`}
@@ -151,7 +171,7 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
                       <td className="px-4 py-3">
                         <code className="text-xs text-blue-300 bg-slate-900 px-1.5 py-0.5 rounded">{tx.id}</code>
                       </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{fmtDate(tx.date)}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{fmtDate(tx.date || tx.timestamp)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           {isAnomaly && <AlertTriangle className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" />}
@@ -175,7 +195,7 @@ export default function TransactionFeed({ transactions = [], latestTx, isConnect
                       <td className={`px-4 py-3 text-right font-semibold ${tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                         {tx.type === 'CREDIT' ? '+' : '−'}{fmtAmt(tx.amount)}
                       </td>
-                      <td className="px-4 py-3 text-right text-slate-300">{fmtAmt(tx.balance)}</td>
+                      <td className="px-4 py-3 text-right text-slate-300">{fmtAmt(tx.balance ?? tx.account_balance ?? 0)}</td>
                     </tr>
                   );
                 })

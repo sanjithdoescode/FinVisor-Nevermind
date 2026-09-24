@@ -89,11 +89,12 @@ class ConnectionManager:
         self.active.append(ws)
 
     def disconnect(self, ws: WebSocket) -> None:
-        self.active.remove(ws)
+        if ws in self.active:
+            self.active.remove(ws)
 
     async def broadcast(self, data: str) -> None:
         disconnected = []
-        for ws in self.active:
+        for ws in list(self.active):
             try:
                 await ws.send_text(data)
             except Exception:
@@ -753,9 +754,11 @@ async def websocket_live(ws: WebSocket) -> None:
                     await ws.send_text("pong")
             except asyncio.TimeoutError:
                 await ws.send_text(json.dumps({"type": "heartbeat", "ts": datetime.utcnow().isoformat()}))
-    except WebSocketDisconnect:
-        manager.disconnect(ws)
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
     except Exception:
+        pass
+    finally:
         manager.disconnect(ws)
 
 

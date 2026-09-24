@@ -23,19 +23,29 @@ export function useLiveTransactions() {
 
   // ── Push a new transaction into the rolling buffer ──
   const pushTransaction = useCallback((tx) => {
-    setLatestTx(tx);
+    if (!tx || !tx.id) return;
+    const normalized = {
+      ...tx,
+      date: tx.date || tx.timestamp || new Date().toISOString(),
+      balance: tx.balance ?? tx.account_balance ?? 0,
+    };
+    setLatestTx(normalized);
     setTransactions((prev) => {
-      const updated = [tx, ...prev];
-      return updated.slice(0, BUFFER_SIZE);
+      const filtered = prev.filter((t) => t.id !== normalized.id);
+      return [normalized, ...filtered].slice(0, BUFFER_SIZE);
     });
   }, []);
 
   // ── Start demo mock feed when backend is unavailable ──
   const startMockFeed = useCallback(() => {
+    if (mockTimerRef.current) return;
     mockTimerRef.current = setInterval(() => {
-      const tx = { ...MOCK_TRANSACTIONS[mockIndexRef.current % MOCK_TRANSACTIONS.length] };
-      tx.id = `LIVE-${Date.now()}`;
-      tx.date = new Date().toISOString();
+      const base = MOCK_TRANSACTIONS[mockIndexRef.current % MOCK_TRANSACTIONS.length];
+      const tx = {
+        ...base,
+        id: `MOCK-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        date: new Date().toISOString(),
+      };
       pushTransaction(tx);
       mockIndexRef.current += 1;
     }, 3000);
@@ -49,7 +59,7 @@ export function useLiveTransactions() {
   }, []);
 
   useEffect(() => {
-    let useMock = false;
+    let mockFallbackTimer = null;
 
     // Try real WebSocket first
     wsController.current = createTransactionWebSocket(
@@ -57,39 +67,37 @@ export function useLiveTransactions() {
         // Handle both single tx and batch
         if (Array.isArray(data)) {
           data.forEach(pushTransaction);
-        } else {
+        } else if (data && data.type !== 'heartbeat') {
           pushTransaction(data);
         }
       },
       () => {
         // onOpen
         setIsConnected(true);
+        if (mockFallbackTimer) clearTimeout(mockFallbackTimer);
         stopMockFeed();
-        useMock = false;
       },
       () => {
         // onClose
         setIsConnected(false);
-        // Fall back to mock if not already running
-        if (!mockTimerRef.current) {
-          useMock = true;
-          startMockFeed();
-        }
+        startMockFeed();
       },
       () => {
         // onError - switch to mock mode
         setIsConnected(false);
-        if (!mockTimerRef.current) {
-          useMock = true;
-          startMockFeed();
-        }
+        startMockFeed();
       }
     );
 
-    // Start mock immediately; will be stopped if WS connects
-    startMockFeed();
+    // Give real connection 1.5s before falling back to mock feed
+    mockFallbackTimer = setTimeout(() => {
+      if (!wsController.current || wsController.current.readyState !== 1) {
+        startMockFeed();
+      }
+    }, 1500);
 
     return () => {
+      if (mockFallbackTimer) clearTimeout(mockFallbackTimer);
       if (wsController.current) wsController.current.close();
       stopMockFeed();
     };

@@ -236,8 +236,8 @@ export default function Dashboard({ transactions, isConnected, onNavigate }) {
                 <p className="text-sm font-medium text-slate-200">{anomaly.type}</p>
                 <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{anomaly.description}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {anomaly.evidence.map(txId => (
-                    <span key={txId} className="text-xs bg-slate-700 text-blue-300 px-1.5 py-0.5 rounded font-mono">{txId}</span>
+                  {anomaly.evidence.map((txId, idx) => (
+                    <span key={`${txId}-${idx}`} className="text-xs bg-slate-700 text-blue-300 px-1.5 py-0.5 rounded font-mono">{txId}</span>
                   ))}
                 </div>
               </div>

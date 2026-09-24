@@ -136,8 +136,8 @@ export default function AnomalyAlerts() {
                     {/* Evidence */}
                     <div className="flex flex-wrap items-center gap-2 mt-2">
                       <span className="text-xs text-slate-500">Evidence:</span>
-                      {anomaly.evidence.map(txId => (
-                        <span key={txId} className="text-xs bg-slate-700 text-blue-300 px-2 py-0.5 rounded font-mono border border-blue-500/20">
+                      {anomaly.evidence.map((txId, idx) => (
+                        <span key={`${txId}-${idx}`} className="text-xs bg-slate-700 text-blue-300 px-2 py-0.5 rounded font-mono border border-blue-500/20">
                           {txId}
                         </span>
                       ))}

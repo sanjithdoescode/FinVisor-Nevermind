@@ -148,15 +148,37 @@ export const createTransactionWebSocket = (onMessage, onOpen, onClose, onError) 
   let reconnectTimer = null;
   let isClosed = false;
 
+  const handlePageHide = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const handlePageShow = (event) => {
+    if (event.persisted && !isClosed) {
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        connect();
+      }
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('pageshow', handlePageShow);
+  }
+
   const connect = () => {
+    if (isClosed) return;
     try {
       ws = new WebSocket(`${WS_URL}/ws/transactions`);
 
       ws.onopen = () => {
-        if (onOpen) onOpen();
+        if (!isClosed && onOpen) onOpen();
       };
 
       ws.onmessage = (event) => {
+        if (isClosed) return;
         try {
           const data = JSON.parse(event.data);
           if (onMessage) onMessage(data);
@@ -166,19 +188,19 @@ export const createTransactionWebSocket = (onMessage, onOpen, onClose, onError) 
       };
 
       ws.onclose = () => {
-        if (onClose) onClose();
-        // Auto-reconnect unless explicitly closed
-        if (!isClosed) {
+        if (!isClosed && onClose) onClose();
+        // Auto-reconnect unless explicitly closed or page is frozen
+        if (!isClosed && (typeof document === 'undefined' || document.visibilityState !== 'hidden')) {
           reconnectTimer = setTimeout(connect, 3000);
         }
       };
 
       ws.onerror = (err) => {
-        if (onError) onError(err);
+        if (!isClosed && onError) onError(err);
       };
     } catch (e) {
       console.warn('WebSocket connection failed:', e);
-      if (!isClosed) {
+      if (!isClosed && (typeof document === 'undefined' || document.visibilityState !== 'hidden')) {
         reconnectTimer = setTimeout(connect, 3000);
       }
     }
@@ -189,11 +211,39 @@ export const createTransactionWebSocket = (onMessage, onOpen, onClose, onError) 
   return {
     close: () => {
       isClosed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (ws) ws.close();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', handlePageHide);
+        window.removeEventListener('pageshow', handlePageShow);
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.close(1000, 'Normal Closure');
+          } catch (_) {}
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          // Defer closing until open to prevent browser "closed before connection is established" warning
+          const pendingWs = ws;
+          pendingWs.onopen = () => {
+            try {
+              pendingWs.close(1000, 'Normal Closure');
+            } catch (_) {}
+          };
+          pendingWs.onerror = () => {};
+        }
+        ws = null;
+      }
     },
     get readyState() {
-      return ws ? ws.readyState : WebSocket.CLOSED;
+      return ws ? ws.readyState : (typeof WebSocket !== 'undefined' ? WebSocket.CLOSED : 3);
     },
   };
 };
